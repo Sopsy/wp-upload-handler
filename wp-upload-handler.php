@@ -3,7 +3,7 @@
  * Plugin Name: WP Upload handler
  * Plugin URI: https://github.com/Sopsy/wp-upload-handler/
  * Description: Fixes uploaded image rotation and compresses them with PNGCrush and JpegOptim. Replaces WP jpeg_quality.
- * Version: 2.0
+ * Version: 2.1
  * Author: Aleksi "Sopsy" Kinnunen
  * License: AGPLv3
  */
@@ -14,17 +14,12 @@ if (!defined('ABSPATH')) {
 class F881_UploadHandler
 {
     public static $jpeqQuality = 80;
-    public static $skipHandling = false;
 
     protected static $pngCrush = '/usr/bin/pngcrush';
     protected static $jpegoptim = '/usr/bin/jpegoptim';
 
     public static function handleUpload($uploaded_file)
     {
-        if (static::$skipHandling) {
-            return $uploaded_file;
-        }
-
         $uploaded_file = static::rotateByExif($uploaded_file);
         $uploaded_file = static::optimizeImages($uploaded_file);
 
@@ -33,10 +28,6 @@ class F881_UploadHandler
 
     public static function optimizeResized($file)
     {
-        if (static::$skipHandling) {
-            return $file;
-        }
-
         if (empty($file)) {
             return $file;
         }
@@ -127,13 +118,18 @@ class F881_UploadHandler
 
     public static function wpJpegQuality()
     {
+        if (!is_executable(static::$jpegoptim)) {
+            return static::$jpeqQuality;
+        }
+
         // Set to 100 to prevent double compression (optimizeJpeg does compression)
         return 100;
     }
 
     protected static function optimizeJpeg($file)
     {
-        if (!is_file($file) || !getimagesize($file)) {
+
+        if (!is_executable(static::$jpegoptim) || !is_file($file) || !getimagesize($file)) {
             return false;
         }
 
@@ -150,7 +146,7 @@ class F881_UploadHandler
 
     protected static function optimizePng($file)
     {
-        if (!is_file($file) || !getimagesize($file)) {
+        if (!is_executable(static::$pngCrush) || !is_file($file) || !getimagesize($file)) {
             return false;
         }
 
