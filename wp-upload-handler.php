@@ -3,9 +3,10 @@
  * Plugin Name: WP Upload handler
  * Plugin URI: https://github.com/Sopsy/wp-upload-handler/
  * Description: Fixes uploaded image rotation and compresses them with PNGCrush and JpegOptim. Replaces WP jpeg_quality.
- * Version: 2.1
+ * Version: 2.2
  * Author: Aleksi "Sopsy" Kinnunen
  * License: AGPLv3
+ * Depends: shell_exec, jpegoptim, pngcrush, php-fileinfo
  */
 if (!defined('ABSPATH')) {
     exit;
@@ -13,10 +14,67 @@ if (!defined('ABSPATH')) {
 
 class F881_UploadHandler
 {
-    public static $jpeqQuality = 80;
+    protected $checkDependencies = true; // You can disable this when all dependencies are installed to make the code a bit faster
 
+    public static $jpeqQuality = 80;
     protected static $pngCrush = '/usr/bin/pngcrush';
     protected static $jpegoptim = '/usr/bin/jpegoptim';
+
+    public function __construct()
+    {
+        add_filter('jpeg_quality', ['F881_UploadHandler', 'wpJpegQuality']);
+        add_filter('wp_handle_upload', ['F881_UploadHandler', 'handleUpload'], 10, 1);
+        add_filter('image_make_intermediate_size', ['F881_UploadHandler', 'optimizeResized']);
+
+        if ($this->checkDependencies && is_admin()) {
+            // Test for php-fileinfo
+            if (!function_exists('mime_content_type')) {
+                $this->missingDependencyError('php-fileinfo module');
+            }
+
+            // Test if shell_exec can be run
+            if (!function_exists('shell_exec') ||
+                in_array('shell_exec', array_map('trim', explode(', ', ini_get('disable_functions')))) ||
+                strtolower(ini_get('safe_mode')) == 1
+            ) {
+                $this->missingDependencyError('shell_exec');
+            }
+
+            if (!is_executable(static::$jpegoptim)) {
+                $this->missingDependencyError('jpegoptim (' . static::$jpegoptim . ')', false);
+            }
+
+            if (!is_executable(static::$pngCrush)) {
+                $this->missingDependencyError('pngcrush (' . static::$pngCrush . ')', false);
+            }
+        }
+    }
+
+    protected function missingDependencyError($dependency, $affectsAllFiles = true)
+    {
+        $this->addAdminNotice('[WP Upload handler ERROR] Missing dependencies: ' . $dependency . '  is not installed, enabled or executable. ' .
+            ($affectsAllFiles ? 'Uploaded' : 'Some uploaded') . ' files will not get optimized.');
+    }
+
+    protected function addAdminNotice($message, $type = 'error')
+    {
+        $class = 'notice notice-' . $type;
+        $notice = sprintf('<div class="%1$s"><p>%2$s</p></div>', esc_attr($class), esc_html($message));
+
+        add_action('admin_notices', function() use ($notice) {
+            echo $notice;
+        });
+    }
+
+    public static function wpJpegQuality()
+    {
+        if (!is_executable(static::$jpegoptim)) {
+            return static::$jpeqQuality;
+        }
+
+        // Set to 100 to prevent double compression (optimizeJpeg does compression)
+        return 100;
+    }
 
     public static function handleUpload($uploaded_file)
     {
@@ -32,6 +90,10 @@ class F881_UploadHandler
             return $file;
         }
 
+        if (!function_exists('mime_content_type')) {
+            return $file;
+        }
+
         $mime = mime_content_type($file);
         if ($mime == 'image/png') {
             static::optimizePng($file);
@@ -43,7 +105,7 @@ class F881_UploadHandler
 
     }
 
-    public static function rotateByExif($uploaded_file)
+    protected static function rotateByExif($uploaded_file)
     {
         // Rotate by EXIF-tag
         // Rotate only jpegs
@@ -99,7 +161,7 @@ class F881_UploadHandler
         return $uploaded_file;
     }
 
-    public static function optimizeImages($uploaded_file)
+    protected static function optimizeImages($uploaded_file)
     {
         // Crush PNGs
         if ($uploaded_file['type'] == 'image/png') {
@@ -114,16 +176,6 @@ class F881_UploadHandler
         }
 
         return $uploaded_file;
-    }
-
-    public static function wpJpegQuality()
-    {
-        if (!is_executable(static::$jpegoptim)) {
-            return static::$jpeqQuality;
-        }
-
-        // Set to 100 to prevent double compression (optimizeJpeg does compression)
-        return 100;
     }
 
     protected static function optimizeJpeg($file)
@@ -157,6 +209,4 @@ class F881_UploadHandler
     }
 }
 
-add_filter('wp_handle_upload', ['F881_UploadHandler', 'handleUpload'], 10, 1);
-add_filter('image_make_intermediate_size', ['F881_UploadHandler', 'optimizeResized']);
-add_filter('jpeg_quality', ['F881_UploadHandler', 'wpJpegQuality']);
+new F881_UploadHandler();
